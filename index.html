@@ -582,7 +582,13 @@ function submitR(){
   const rProdsToSave=filled;
   const id=genId(),now=new Date(),recs=getRecs();
   (typeof rProdsToSave!=='undefined'?rProdsToSave:rProds).forEach((p,i)=>{recs.push({id:id+(i>0?`-P${i+1}`:''),tr:'RECIBO',fecha:now.toISOString(),fd:fmtDate(now),proveedor:prov,np:i+1,tipo:p.tipo,sku:p.sku,grado:p.grado,colada:p.colada,lote:p.lote,diametro:p.diametro,longitud:p.longitud,unidades:p.unidades,foto:p.foto});});
-  saveRecs(recs);const cnt=rProds.length;rProds=[nRP()];rTab=0;showSuc('r',id,cnt);
+  saveRecs(recs);
+  const cnt=rProds.length;rProds=[nRP()];rTab=0;
+  showSuc('r',id,cnt);
+  // Sync to SharePoint
+  const newRecsR=getRecs().filter(r=>r.id.startsWith(id));
+  Promise.all(newRecsR.map(r=>syncToSharePoint(r).then(ok=>{if(ok){r.synced=true;}})))
+    .then(()=>saveRecs(getRecs()));
 }
 
 // ── VENTAS ──
@@ -605,7 +611,13 @@ function submitV(){
   const vProdsToSave=vFilled;
   const id=genId(),now=new Date(),recs=getRecs();
   (typeof vProdsToSave!=='undefined'?vProdsToSave:vProds).forEach((p,i)=>{recs.push({id:id+(i>0?`-P${i+1}`:''),tr:'ENTREGA',fecha:now.toISOString(),fd:fmtDate(now),tipo_doc:td,num_doc:nd,np:i+1,tipo:p.tipo,sku:p.sku,grado:p.grado,colada:p.colada,lote:p.lote,diametro:p.diametro,longitud:p.longitud,foto:vFoto});});
-  saveRecs(recs);const cnt=vProds.length;vProds=[nVP()];vTab=0;rmVFoto();showSuc('v',id,cnt);
+  saveRecs(recs);
+  const cnt=vProds.length;vProds=[nVP()];vTab=0;rmVFoto();
+  showSuc('v',id,cnt);
+  // Sync to SharePoint
+  const newRecsV=getRecs().filter(r=>r.id.startsWith(id));
+  Promise.all(newRecsV.map(r=>syncToSharePoint(r).then(ok=>{if(ok){r.synced=true;}})))
+    .then(()=>saveRecs(getRecs()));
 }
 
 // ── SUCCESS ──
@@ -615,7 +627,11 @@ function showSuc(t,id,n){
   document.getElementById('sucCheck').style.background=t==='r'?'#eef0f8':'#fdf3e8';
   document.getElementById('sucCheck').style.color=t==='r'?'var(--steel)':'var(--accent)';
   document.getElementById('sucTitle').textContent=t==='r'?'Recibo guardado correctamente':'Entrega registrada correctamente';
-  document.getElementById('sucSub').textContent=`Se registraron ${n} producto(s) en el sistema.`;
+  document.getElementById('sucSub').textContent=`Se registraron ${n} producto(s). Sincronizando con SharePoint...`;
+  setTimeout(()=>{
+    const el=document.getElementById('sucSub');
+    if(el) el.textContent=`${n} producto(s) registrado(s) y guardados en SharePoint.`;
+  },4000);
   document.getElementById('sucId').textContent=id;
   document.getElementById('sucNew').textContent=t==='r'?'Registrar nuevo recibo':'Registrar nueva entrega';
   lastForm=t;updateStats();
@@ -633,7 +649,7 @@ function renderRecs(q){
   el.innerHTML=recs.map(r=>`
     <div class="rec-card ${r.tr==='ENTREGA'?'vc':''}">
       <div class="rec-hdr"><span class="rec-type ${r.tr==='ENTREGA'?'tv':'tr'}">${r.tr}</span><span class="rec-date">${r.fd}</span></div>
-      <div class="rec-id">${r.id}</div>
+      <div class="rec-id">${r.id} <span style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700;background:${r.synced?'#edf7f0':'#fff8e1'};color:${r.synced?'#16a34a':'#b45309'}">${r.synced?'SINCRONIZADO':'PENDIENTE'}</span></div>
       <div class="rec-fields">
         ${r.tr==='RECIBO'?`<div class="rf"><span class="k">Proveedor: </span><span class="v">${r.proveedor||'—'}</span></div>`:`<div class="rf"><span class="k">Documento: </span><span class="v">${r.num_doc||'—'}</span></div>`}
         <div class="rf"><span class="k">Producto: </span><span class="v">${r.tipo||'—'}</span></div>
@@ -667,8 +683,58 @@ function updateStats(){
   document.getElementById('stV').textContent=recs.filter(r=>r.tr==='ENTREGA'&&new Date(r.fecha).toDateString()===t).length;
 }
 
+
+// ── SHAREPOINT SYNC ──
+const FLOW_URL = 'https://defaultf17834341e434660b243a8525e0181.06.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/31/workflows/7a12525e920f40ecbd9600dc7afe28b4/triggers/manual/paths/invoke?api-version=1';
+
+async function syncToSharePoint(record) {
+  try {
+    const payload = {
+      tipo_registro: record.tr,
+      fecha: record.fecha,
+      proveedor: record.proveedor || '',
+      tipo_doc: record.tipo_doc || '',
+      num_documento: record.num_doc || '',
+      num_producto: record.np || 1,
+      tipo_producto: record.tipo || '',
+      sku: record.sku || '',
+      grado: record.grado || '',
+      colada: record.colada || '',
+      lote: record.lote || '',
+      diametro: record.diametro || '',
+      longitud_m: parseFloat(record.longitud) || 0,
+      unidades: parseFloat(record.unidades) || 0,
+      foto_base64: record.foto ? record.foto.split(',')[1] || '' : '',
+      foto_nombre: record.id.replace(/-/g,'_')
+    };
+    const res = await fetch(FLOW_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return res.ok;
+  } catch(e) {
+    console.error('Sync error:', e);
+    return false;
+  }
+}
+
+async function syncPending() {
+  const recs = getRecs();
+  const pending = recs.filter(r => !r.synced);
+  if(!pending.length) return;
+  let synced = 0;
+  for(const rec of pending) {
+    const ok = await syncToSharePoint(rec);
+    if(ok) { rec.synced = true; synced++; }
+  }
+  if(synced > 0) saveRecs(recs);
+}
+
 // Init
 applyConfig();
+// Sync pending on load
+syncPending();
 </script>
 </body>
 </html>
