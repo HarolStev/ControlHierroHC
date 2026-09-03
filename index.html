@@ -402,23 +402,65 @@ function fmtDate(d){return d.toLocaleDateString('es-CO')+' '+d.toLocaleTimeStrin
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);}
 
 // ── APPLY CONFIG ──
-function applyConfig(){
-  const c=getCfg();
-  // Login
-  document.getElementById('loginAppName').textContent=c.name;
-  document.getElementById('loginAppSub').textContent=c.sub;
+function applyConfig(remote){
+  const local=getCfg();
+  const c=remote||local;
+  if(remote){
+    // Save remote config locally so it works offline
+    localStorage.setItem('pa_cfg',JSON.stringify({...local,...remote}));
+  }
+  document.getElementById('loginAppName').textContent=c.name||'Patio Acero';
+  document.getElementById('loginAppSub').textContent=c.sub||'Constructor Tunja';
   const ll=document.getElementById('loginLogo');
-  const llt=document.getElementById('loginLogoText');
-  if(c.logo){ll.innerHTML=`<img src="${c.logo}" alt="logo">`;} else {ll.innerHTML=`<span class="l-logo-text">${c.logoText||'PA'}</span>`;}
-  // Header
-  document.getElementById('headerAppName').textContent=c.name;
+  if(c.logo){ll.innerHTML=`<img src="${c.logo}" alt="logo">`;}
+  else{ll.innerHTML=`<span class="l-logo-text">${c.logoText||'PA'}</span>`;}
+  document.getElementById('headerAppName').textContent=c.name||'Patio Acero';
   const hl=document.getElementById('headerLogo');
-  if(c.logo){hl.innerHTML=`<img src="${c.logo}" alt="logo">`;} else {hl.innerHTML=`<span class="h-logo-text">${c.logoText||'PA'}</span>`;}
-  // Settings preview
+  if(c.logo){hl.innerHTML=`<img src="${c.logo}" alt="logo">`;}
+  else{hl.innerHTML=`<span class="h-logo-text">${c.logoText||'PA'}</span>`;}
   const sp=document.getElementById('settingsLogoPreview');
-  if(c.logo){sp.innerHTML=`<img src="${c.logo}" alt="logo">`;} else {sp.innerHTML=`<span>${c.logoText||'PA'}</span>`;}
-  document.getElementById('settingsAppName').value=c.name;
-  document.getElementById('settingsAppSub').value=c.sub;
+  if(c.logo){sp.innerHTML=`<img src="${c.logo}" alt="logo">`;}
+  else{sp.innerHTML=`<span>${c.logoText||'PA'}</span>`;}
+  if(document.getElementById('settingsAppName')) document.getElementById('settingsAppName').value=c.name||'';
+  if(document.getElementById('settingsAppSub')) document.getElementById('settingsAppSub').value=c.sub||'';
+}
+
+async function loadRemoteConfig(){
+  try{
+    const res=await fetch(GS_URL+'?action=getConfig',{method:'GET',mode:'no-cors'});
+    // no-cors can't read response, use iframe trick instead
+  }catch(e){}
+  // Use a JSONP-style approach via script tag
+  return new Promise((resolve)=>{
+    const s=document.createElement('script');
+    window._cfgCb=(data)=>{
+      document.head.removeChild(s);
+      if(data&&data.ok&&data.config){
+        const c=data.config;
+        applyConfig({
+          name:c.app_name||'Patio Acero',
+          sub:c.app_sub||'Constructor Tunja',
+          logo:c.app_logo||'',
+          logoText:(c.app_name||'PA').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()
+        });
+      }
+      resolve();
+    };
+    s.src=GS_URL+'?action=getConfig&callback=_cfgCb';
+    s.onerror=()=>resolve();
+    document.head.appendChild(s);
+  });
+}
+
+async function saveRemoteConfig(cfg){
+  try{
+    const encoded=encodeURIComponent(JSON.stringify({
+      app_name:cfg.name,
+      app_sub:cfg.sub,
+      app_logo:cfg.logo||''
+    }));
+    await fetch(GS_URL+'?action=setConfig&data='+encoded,{method:'GET',mode:'no-cors'});
+  }catch(e){console.error('Config save error',e);}
 }
 
 // ── LOGIN ──
@@ -462,7 +504,8 @@ function newRec(){showForm(lastForm);}
 function handleLogoUpload(inp){
   const f=inp.files[0];if(!f)return;
   const rd=new FileReader();rd.onload=e=>{
-    const c=getCfg();c.logo=e.target.result;saveCfg(c);applyConfig();toast('Logo actualizado');
+    const c=getCfg();c.logo=e.target.result;saveCfg(c);applyConfig(c);
+    saveRemoteConfig(c).then(()=>toast('Logo actualizado en todos los dispositivos'));
   };rd.readAsDataURL(f);
 }
 function saveAppSettings(){
@@ -470,9 +513,9 @@ function saveAppSettings(){
   const sub=document.getElementById('settingsAppSub').value.trim();
   if(!name){toast('Ingresa el nombre de la aplicación');return;}
   const c=getCfg();c.name=name;c.sub=sub;
-  // derive logo text from initials
   c.logoText=name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-  saveCfg(c);applyConfig();toast('Configuración guardada');
+  saveCfg(c);applyConfig(c);
+  saveRemoteConfig(c).then(()=>toast('Configuración guardada en todos los dispositivos'));
 }
 function changePin(r){
   const n=document.getElementById(r==='op'?'cpOpN':'cpAdN').value;
@@ -744,10 +787,13 @@ function clearAllData(){
   toast('Registros borrados correctamente');
 }
 
-// Init
+// Init — apply local config immediately then load remote
 applyConfig();
-// Sync pending on load
-syncPending();
+// Load remote config and sync pending data
+(async()=>{
+  await loadRemoteConfig();
+  await syncPending();
+})();
 </script>
 </body>
 </html>
