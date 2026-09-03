@@ -631,8 +631,15 @@ function submitR(){
   showSuc('r',id,cnt);
   // Sync to SharePoint
   const newRecsR=getRecs().filter(r=>r.id.startsWith(id));
-  Promise.all(newRecsR.map(r=>syncToSheets(r).then(ok=>{if(ok){r.synced=true;}})))
-    .then(()=>saveRecs(getRecs()));
+  // Send sequentially — one by one
+  (async()=>{
+    for(const r of newRecsR){
+      const ok = await syncToSheets(r);
+      if(ok){ r.synced=true; }
+      await new Promise(res=>setTimeout(res,800));
+    }
+    saveRecs(getRecs());
+  })();
 }
 
 // ── VENTAS ──
@@ -660,8 +667,15 @@ function submitV(){
   showSuc('v',id,cnt);
   // Sync to SharePoint
   const newRecsV=getRecs().filter(r=>r.id.startsWith(id));
-  Promise.all(newRecsV.map(r=>syncToSheets(r).then(ok=>{if(ok){r.synced=true;}})))
-    .then(()=>saveRecs(getRecs()));
+  // Send sequentially — one by one
+  (async()=>{
+    for(const r of newRecsV){
+      const ok = await syncToSheets(r);
+      if(ok){ r.synced=true; }
+      await new Promise(res=>setTimeout(res,800));
+    }
+    saveRecs(getRecs());
+  })();
 }
 
 // ── SUCCESS ──
@@ -731,52 +745,81 @@ function updateStats(){
 // ── GOOGLE SHEETS SYNC ──
 const GS_URL = 'https://script.google.com/macros/s/AKfycbxM3_Y9k2VkcvdWJ5JY0waFrYbPxsy4XGgXeYeO-t6-SOe9Y5-wOnGC9VNJvf7fC8q3fw/exec';
 
-async function syncToSheets(record) {
-  try {
-    const payload = {
-      id: record.id,
-      tipo_registro: record.tr,
-      fecha: record.fd || record.fecha,
-      proveedor: record.proveedor || '',
-      tipo_doc: record.tipo_doc || '',
-      num_documento: record.num_doc || '',
-      num_producto: record.np || 1,
-      tipo_producto: record.tipo || '',
-      sku: record.sku || '',
-      grado: record.grado || '',
-      colada: record.colada || '',
-      lote: record.lote || '',
-      diametro: record.diametro || '',
-      longitud_m: parseFloat(record.longitud) || 0,
-      unidades: parseFloat(record.unidades) || 0,
-      foto_base64: record.foto ? record.foto.split(',')[1] || '' : '',
-      foto_nombre: record.id.replace(/-/g,'_'),
-      registrado_por: record.registrado_por || '',
-      dispositivo: navigator.userAgent.includes('Mobile') ? 'Móvil' : 'PC'
+function buildPayload(record){
+  return {
+    id: record.id,
+    tipo_registro: record.tr,
+    fecha: record.fd || record.fecha,
+    proveedor: record.proveedor || '',
+    tipo_doc: record.tipo_doc || '',
+    num_documento: record.num_doc || '',
+    num_producto: record.np || 1,
+    tipo_producto: record.tipo || '',
+    sku: record.sku || '',
+    grado: record.grado || '',
+    colada: record.colada || '',
+    lote: record.lote || '',
+    diametro: record.diametro || '',
+    longitud_m: parseFloat(record.longitud) || 0,
+    unidades: parseFloat(record.unidades) || 0,
+    foto_base64: record.foto ? record.foto.split(',')[1] || '' : '',
+    foto_nombre: record.id.replace(/-/g,'_'),
+    registrado_por: record.registrado_por || '',
+    dispositivo: navigator.userAgent.includes('Mobile') ? 'Móvil' : 'PC'
+  };
+}
+
+function syncViaScript(payload){
+  // Sequential JSONP — one at a time with unique callback
+  return new Promise((resolve)=>{
+    const cbName = '_gs_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+    const s = document.createElement('script');
+    const timer = setTimeout(()=>{
+      try{document.head.removeChild(s);}catch(e){}
+      delete window[cbName];
+      resolve(false);
+    }, 15000);
+    window[cbName] = (data)=>{
+      clearTimeout(timer);
+      try{document.head.removeChild(s);}catch(e){}
+      delete window[cbName];
+      resolve(data && data.ok !== false);
     };
-    // Use image element trick to send GET with encoded data (avoids CORS)
     const encoded = encodeURIComponent(JSON.stringify(payload));
-    await fetch(GS_URL + '?data=' + encoded, {
-      method: 'GET',
-      mode: 'no-cors'
-    });
-    return true;
-  } catch(e) {
-    console.error('Sync error:', e);
+    s.src = GS_URL + '?data=' + encoded + '&callback=' + cbName;
+    s.onerror = ()=>{
+      clearTimeout(timer);
+      try{document.head.removeChild(s);}catch(e){}
+      delete window[cbName];
+      // Fallback: try no-cors fetch (won't confirm but usually works)
+      fetch(GS_URL + '?data=' + encoded, {method:'GET', mode:'no-cors'})
+        .then(()=>resolve(true)).catch(()=>resolve(false));
+    };
+    document.head.appendChild(s);
+  });
+}
+
+async function syncToSheets(record){
+  try{
+    const ok = await syncViaScript(buildPayload(record));
+    return ok;
+  }catch(e){
+    console.error('Sync error:',e);
     return false;
   }
 }
 
-async function syncPending() {
+async function syncPending(){
   const recs = getRecs();
   const pending = recs.filter(r => !r.synced);
   if(!pending.length) return;
-  let synced = 0;
-  for(const rec of pending) {
+  // Send one by one sequentially — never in parallel
+  for(const rec of pending){
     const ok = await syncToSheets(rec);
-    if(ok) { rec.synced = true; synced++; }
+    if(ok){ rec.synced = true; saveRecs(recs); }
+    // Small delay between records to avoid overload
+    await new Promise(r => setTimeout(r, 800));
   }
-  if(synced > 0) saveRecs(recs);
 }
 
 // ── CLEAR DATA ──
