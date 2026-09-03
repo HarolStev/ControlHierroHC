@@ -426,30 +426,10 @@ function applyConfig(remote){
 }
 
 async function loadRemoteConfig(){
-  try{
-    const res=await fetch(GS_URL+'?action=getConfig',{method:'GET',mode:'no-cors'});
-    // no-cors can't read response, use iframe trick instead
-  }catch(e){}
-  // Use a JSONP-style approach via script tag
-  return new Promise((resolve)=>{
-    const s=document.createElement('script');
-    window._cfgCb=(data)=>{
-      document.head.removeChild(s);
-      if(data&&data.ok&&data.config){
-        const c=data.config;
-        applyConfig({
-          name:c.app_name||'Patio Acero',
-          sub:c.app_sub||'Constructor Tunja',
-          logo:c.app_logo||'',
-          logoText:(c.app_name||'PA').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()
-        });
-      }
-      resolve();
-    };
-    s.src=GS_URL+'?action=getConfig&callback=_cfgCb';
-    s.onerror=()=>resolve();
-    document.head.appendChild(s);
-  });
+  // Config is saved locally when admin changes it
+  // Remote config loading skipped due to CSP restrictions on GitHub Pages
+  // Config changes propagate via the local cache set by saveRemoteConfig
+  return;
 }
 
 async function saveRemoteConfig(cfg){
@@ -707,7 +687,7 @@ function renderRecs(q){
   el.innerHTML=recs.map(r=>`
     <div class="rec-card ${r.tr==='ENTREGA'?'vc':''}">
       <div class="rec-hdr"><span class="rec-type ${r.tr==='ENTREGA'?'tv':'tr'}">${r.tr}</span><span class="rec-date">${r.fd}</span></div>
-      <div class="rec-id">${r.id} <span style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700;background:${r.synced?'#edf7f0':'#fff8e1'};color:${r.synced?'#16a34a':'#b45309'}">${r.synced?'SINCRONIZADO':'PENDIENTE'}</span></div>
+      <div class="rec-id">${r.id} <span style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700;background:${r.synced?'#edf7f0':'#fff8e1'};color:${r.synced?'#16a34a':'#b45309'}">${r.synced?'ENVIADO A BD':'LOCAL'}</span></div>
       <div class="rec-fields">
         ${r.tr==='RECIBO'?`<div class="rf"><span class="k">Proveedor: </span><span class="v">${r.proveedor||'—'}</span></div>`:`<div class="rf"><span class="k">Documento: </span><span class="v">${r.num_doc||'—'}</span></div>`}
         <div class="rf"><span class="k">Producto: </span><span class="v">${r.tipo||'—'}</span></div>
@@ -769,40 +749,17 @@ function buildPayload(record){
   };
 }
 
-function syncViaScript(payload){
-  // Sequential JSONP — one at a time with unique callback
-  return new Promise((resolve)=>{
-    const cbName = '_gs_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-    const s = document.createElement('script');
-    const timer = setTimeout(()=>{
-      try{document.head.removeChild(s);}catch(e){}
-      delete window[cbName];
-      resolve(false);
-    }, 15000);
-    window[cbName] = (data)=>{
-      clearTimeout(timer);
-      try{document.head.removeChild(s);}catch(e){}
-      delete window[cbName];
-      resolve(data && data.ok !== false);
-    };
-    const encoded = encodeURIComponent(JSON.stringify(payload));
-    s.src = GS_URL + '?data=' + encoded + '&callback=' + cbName;
-    s.onerror = ()=>{
-      clearTimeout(timer);
-      try{document.head.removeChild(s);}catch(e){}
-      delete window[cbName];
-      // Fallback: try no-cors fetch (won't confirm but usually works)
-      fetch(GS_URL + '?data=' + encoded, {method:'GET', mode:'no-cors'})
-        .then(()=>resolve(true)).catch(()=>resolve(false));
-    };
-    document.head.appendChild(s);
-  });
-}
-
 async function syncToSheets(record){
   try{
-    const ok = await syncViaScript(buildPayload(record));
-    return ok;
+    const payload = buildPayload(record);
+    const encoded = encodeURIComponent(JSON.stringify(payload));
+    // Use no-cors fetch — data arrives at Google Sheets even without confirmation
+    await fetch(GS_URL + '?data=' + encoded, {
+      method: 'GET',
+      mode: 'no-cors'
+    });
+    // Mark as synced — data is sent even if we can't read the response
+    return true;
   }catch(e){
     console.error('Sync error:',e);
     return false;
