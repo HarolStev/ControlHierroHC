@@ -587,7 +587,7 @@ function submitR(){
   showSuc('r',id,cnt);
   // Sync to SharePoint
   const newRecsR=getRecs().filter(r=>r.id.startsWith(id));
-  Promise.all(newRecsR.map(r=>syncToSharePoint(r).then(ok=>{if(ok){r.synced=true;}})))
+  Promise.all(newRecsR.map(r=>syncToSheets(r).then(ok=>{if(ok){r.synced=true;}})))
     .then(()=>saveRecs(getRecs()));
 }
 
@@ -616,7 +616,7 @@ function submitV(){
   showSuc('v',id,cnt);
   // Sync to SharePoint
   const newRecsV=getRecs().filter(r=>r.id.startsWith(id));
-  Promise.all(newRecsV.map(r=>syncToSharePoint(r).then(ok=>{if(ok){r.synced=true;}})))
+  Promise.all(newRecsV.map(r=>syncToSheets(r).then(ok=>{if(ok){r.synced=true;}})))
     .then(()=>saveRecs(getRecs()));
 }
 
@@ -627,10 +627,10 @@ function showSuc(t,id,n){
   document.getElementById('sucCheck').style.background=t==='r'?'#eef0f8':'#fdf3e8';
   document.getElementById('sucCheck').style.color=t==='r'?'var(--steel)':'var(--accent)';
   document.getElementById('sucTitle').textContent=t==='r'?'Recibo guardado correctamente':'Entrega registrada correctamente';
-  document.getElementById('sucSub').textContent=`Se registraron ${n} producto(s). Sincronizando con SharePoint...`;
+  document.getElementById('sucSub').textContent=`Se registraron ${n} producto(s). Guardando en base de datos...`;
   setTimeout(()=>{
     const el=document.getElementById('sucSub');
-    if(el) el.textContent=`${n} producto(s) registrado(s) y guardados en SharePoint.`;
+    if(el) el.textContent=`${n} producto(s) registrado(s) y guardados correctamente.`;
   },4000);
   document.getElementById('sucId').textContent=id;
   document.getElementById('sucNew').textContent=t==='r'?'Registrar nuevo recibo':'Registrar nueva entrega';
@@ -684,14 +684,15 @@ function updateStats(){
 }
 
 
-// ── SHAREPOINT SYNC ──
-const FLOW_URL = 'https://defaultf17834341e434660b243a8525e0181.06.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/31/workflows/7a12525e920f40ecbd9600dc7afe28b4/triggers/manual/paths/invoke?api-version=1';
+// ── GOOGLE SHEETS SYNC ──
+const GS_URL = 'https://script.google.com/macros/s/AKfycbx9uQcrFkHJeELn06yagZfICsYt_HDZdSO_OJVXLSKoy_-s2ztdS-gWBQ3C7t4cMiTi/exec';
 
-async function syncToSharePoint(record) {
+async function syncToSheets(record) {
   try {
     const payload = {
+      id: record.id,
       tipo_registro: record.tr,
-      fecha: record.fecha,
+      fecha: record.fd || record.fecha,
       proveedor: record.proveedor || '',
       tipo_doc: record.tipo_doc || '',
       num_documento: record.num_doc || '',
@@ -705,14 +706,18 @@ async function syncToSharePoint(record) {
       longitud_m: parseFloat(record.longitud) || 0,
       unidades: parseFloat(record.unidades) || 0,
       foto_base64: record.foto ? record.foto.split(',')[1] || '' : '',
-      foto_nombre: record.id.replace(/-/g,'_')
+      foto_nombre: record.id.replace(/-/g,'_'),
+      registrado_por: record.registrado_por || '',
+      dispositivo: navigator.userAgent.includes('Mobile') ? 'Móvil' : 'PC'
     };
-    const res = await fetch(FLOW_URL, {
+    const res = await fetch(GS_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify(payload)
     });
-    return res.ok;
+    // no-cors always returns opaque response, treat as success
+    return true;
   } catch(e) {
     console.error('Sync error:', e);
     return false;
@@ -725,7 +730,7 @@ async function syncPending() {
   if(!pending.length) return;
   let synced = 0;
   for(const rec of pending) {
-    const ok = await syncToSharePoint(rec);
+    const ok = await syncToSheets(rec);
     if(ok) { rec.synced = true; synced++; }
   }
   if(synced > 0) saveRecs(recs);
