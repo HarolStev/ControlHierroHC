@@ -605,13 +605,13 @@ function submitR(){
   // Only save filled products
   const rProdsToSave=filled;
   const id=genId(),now=new Date(),recs=getRecs();
-  (typeof rProdsToSave!=='undefined'?rProdsToSave:rProds).forEach((p,i)=>{recs.push({id:id+(i>0?`-P${i+1}`:''),tr:'RECIBO',fecha:now.toISOString(),fd:fmtDate(now),proveedor:prov,np:i+1,tipo:p.tipo,sku:p.sku,grado:p.grado,colada:p.colada,lote:p.lote,diametro:p.diametro,longitud:p.longitud,unidades:p.unidades,foto:p.foto});});
+  rProdsToSave.forEach((p,i)=>{recs.push({id:id+(i>0?`-P${i+1}`:''),tr:'RECIBO',fecha:now.toISOString(),fd:fmtDate(now),proveedor:prov,np:i+1,tipo:p.tipo,sku:p.sku,grado:p.grado,colada:p.colada,lote:p.lote,diametro:p.diametro,longitud:p.longitud,unidades:p.unidades,foto:p.foto});});
   saveRecs(recs);
-  const cnt=rProds.length;rProds=[nRP()];rTab=0;
+  const cnt=rProdsToSave.length;
+  rProds=[nRP()];rTab=0;
   showSuc('r',id,cnt);
-  // Sync to SharePoint
+  // Sync to Google Sheets sequentially
   const newRecsR=getRecs().filter(r=>r.id.startsWith(id));
-  // Send sequentially — one by one
   (async()=>{
     for(const r of newRecsR){
       const ok = await syncToSheets(r);
@@ -641,13 +641,15 @@ function submitV(){
   }
   const vProdsToSave=vFilled;
   const id=genId(),now=new Date(),recs=getRecs();
-  (typeof vProdsToSave!=='undefined'?vProdsToSave:vProds).forEach((p,i)=>{recs.push({id:id+(i>0?`-P${i+1}`:''),tr:'ENTREGA',fecha:now.toISOString(),fd:fmtDate(now),tipo_doc:td,num_doc:nd,np:i+1,tipo:p.tipo,sku:p.sku,grado:p.grado,colada:p.colada,lote:p.lote,diametro:p.diametro,longitud:p.longitud,foto:vFoto});});
+  // Save foto reference before clearing it
+  const fotoParaGuardar=vFoto;
+  vProdsToSave.forEach((p,i)=>{recs.push({id:id+(i>0?`-P${i+1}`:''),tr:'ENTREGA',fecha:now.toISOString(),fd:fmtDate(now),tipo_doc:td,num_doc:nd,np:i+1,tipo:p.tipo,sku:p.sku,grado:p.grado,colada:p.colada,lote:p.lote,diametro:p.diametro,longitud:p.longitud,foto:fotoParaGuardar});});
   saveRecs(recs);
-  const cnt=vProds.length;vProds=[nVP()];vTab=0;rmVFoto();
+  const cnt=vProdsToSave.length;
+  vProds=[nVP()];vTab=0;rmVFoto();
   showSuc('v',id,cnt);
-  // Sync to SharePoint
+  // Sync to Google Sheets sequentially
   const newRecsV=getRecs().filter(r=>r.id.startsWith(id));
-  // Send sequentially — one by one
   (async()=>{
     for(const r of newRecsV){
       const ok = await syncToSheets(r);
