@@ -754,13 +754,14 @@ function buildPayload(record){
 async function syncToSheets(record){
   try{
     const payload = buildPayload(record);
-    const encoded = encodeURIComponent(JSON.stringify(payload));
-    // Use no-cors fetch — data arrives at Google Sheets even without confirmation
-    await fetch(GS_URL + '?data=' + encoded, {
-      method: 'GET',
-      mode: 'no-cors'
+    // Use POST with text/plain body — avoids URL length limits (critical for photos)
+    // no-cors POST means we can't read the response, but data reaches Apps Script reliably
+    await fetch(GS_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload)
     });
-    // Mark as synced — data is sent even if we can't read the response
     return true;
   }catch(e){
     console.error('Sync error:',e);
