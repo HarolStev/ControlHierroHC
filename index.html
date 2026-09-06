@@ -394,7 +394,33 @@ function nVP(){return{tipo:'',sku:'',grado:'',colada:'',lote:'',diametro:'',long
 function getPin(r){return localStorage.getItem('pin_'+r)||(r==='admin'?'0000':'1234');}
 function setPin(r,p){localStorage.setItem('pin_'+r,p);}
 function getRecs(){return JSON.parse(localStorage.getItem('pa_recs')||'[]');}
-function saveRecs(d){localStorage.setItem('pa_recs',JSON.stringify(d));}
+function saveRecs(d){
+  try{
+    localStorage.setItem('pa_recs',JSON.stringify(d));
+    return true;
+  }catch(err){
+    // Storage full — free space by stripping photos from already-synced records
+    console.warn('Storage full, cleaning up synced photos...', err);
+    const cleaned = d.map(r => r.synced ? {...r, foto:''} : r);
+    try{
+      localStorage.setItem('pa_recs',JSON.stringify(cleaned));
+      return true;
+    }catch(err2){
+      // Still full — drop oldest synced records entirely
+      const trimmed = cleaned.filter(r => !r.synced).concat(
+        cleaned.filter(r => r.synced).slice(-20)
+      );
+      try{
+        localStorage.setItem('pa_recs',JSON.stringify(trimmed));
+        toast('Se liberó espacio de almacenamiento automáticamente');
+        return true;
+      }catch(err3){
+        toast('Almacenamiento lleno. Contacta al administrador.');
+        return false;
+      }
+    }
+  }
+}
 function getCfg(){return JSON.parse(localStorage.getItem('pa_cfg')||'{"name":"Patio Acero","sub":"Constructor Tunja — Sodimac","logo":"","logoText":"PA"}');}
 function saveCfg(c){localStorage.setItem('pa_cfg',JSON.stringify(c));}
 function genId(){const n=new Date(),d=n.toISOString().slice(0,10).replace(/-/g,''),t=String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0'),r=Math.random().toString(36).slice(2,5).toUpperCase();return`${d}-${t}-${r}`;}
@@ -426,10 +452,21 @@ function applyConfig(remote){
 }
 
 async function loadRemoteConfig(){
-  // Config is saved locally when admin changes it
-  // Remote config loading skipped due to CSP restrictions on GitHub Pages
-  // Config changes propagate via the local cache set by saveRemoteConfig
-  return;
+  try{
+    const res = await fetch(GS_URL + '?action=getConfig');
+    const data = await res.json();
+    if(data && data.ok && data.config){
+      const c = data.config;
+      applyConfig({
+        name: c.app_name || 'Patio Acero',
+        sub: c.app_sub || 'Constructor Tunja',
+        logo: c.app_logo || '',
+        logoText: (c.app_name||'PA').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()
+      });
+    }
+  }catch(e){
+    console.warn('No se pudo cargar configuración remota, usando local.', e);
+  }
 }
 
 async function saveRemoteConfig(cfg){
@@ -439,8 +476,13 @@ async function saveRemoteConfig(cfg){
       app_sub:cfg.sub,
       app_logo:cfg.logo||''
     }));
-    await fetch(GS_URL+'?action=setConfig&data='+encoded,{method:'GET',mode:'no-cors'});
-  }catch(e){console.error('Config save error',e);}
+    const res = await fetch(GS_URL+'?action=setConfig&data='+encoded);
+    const data = await res.json();
+    return data && data.ok;
+  }catch(e){
+    console.error('Config save error',e);
+    return false;
+  }
 }
 
 // ── LOGIN ──
@@ -483,10 +525,10 @@ function newRec(){showForm(lastForm);}
 // ── SETTINGS ──
 function handleLogoUpload(inp){
   const f=inp.files[0];if(!f)return;
-  const rd=new FileReader();rd.onload=e=>{
-    const c=getCfg();c.logo=e.target.result;saveCfg(c);applyConfig(c);
-    saveRemoteConfig(c).then(()=>toast('Logo actualizado en todos los dispositivos'));
-  };rd.readAsDataURL(f);
+  compressImage(f, 300, 0.8).then(dataUrl=>{
+    const c=getCfg();c.logo=dataUrl;saveCfg(c);applyConfig(c);
+    saveRemoteConfig(c).then(ok=>toast(ok?'Logo actualizado en todos los dispositivos':'Error al guardar el logo. Intenta de nuevo.'));
+  });
 }
 function saveAppSettings(){
   const name=document.getElementById('settingsAppName').value.trim();
@@ -495,7 +537,7 @@ function saveAppSettings(){
   const c=getCfg();c.name=name;c.sub=sub;
   c.logoText=name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
   saveCfg(c);applyConfig(c);
-  saveRemoteConfig(c).then(()=>toast('Configuración guardada en todos los dispositivos'));
+  saveRemoteConfig(c).then(ok=>toast(ok?'Configuración guardada en todos los dispositivos':'Error al guardar. Intenta de nuevo.'));
 }
 function changePin(r){
   const n=document.getElementById(r==='op'?'cpOpN':'cpAdN').value;
@@ -588,7 +630,34 @@ function addProd(m){
   if(m==='r'){if(rProds.length>=3){toast('Máximo 3 productos por recibo');return;}rProds.push(nRP());renderR(rProds.length-1);}
   else{if(vProds.length>=3){toast('Máximo 3 productos por entrega');return;}vProds.push(nVP());renderV(vProds.length-1);}
 }
-function handleRFoto(idx,inp){const f=inp.files[0];if(!f)return;const rd=new FileReader();rd.onload=e=>{rProds[idx].foto=e.target.result;renderR(idx);};rd.readAsDataURL(f);}
+function compressImage(file, maxWidth, quality){
+  return new Promise((resolve)=>{
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = e => {
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if(w > maxWidth){ h = Math.round(h * (maxWidth/w)); w = maxWidth; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(e.target.result);
+      img.src = e.target.result;
+    };
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
+}
+
+function handleRFoto(idx,inp){
+  const f=inp.files[0];if(!f)return;
+  compressImage(f, 1000, 0.65).then(dataUrl=>{
+    rProds[idx].foto=dataUrl;
+    renderR(idx);
+  });
+}
 function submitR(){
   const prov=document.getElementById('rProv').value;
   if(!prov){toast('Selecciona el proveedor');return;}
@@ -613,18 +682,30 @@ function submitR(){
   // Sync to Google Sheets sequentially
   const newRecsR=getRecs().filter(r=>r.id.startsWith(id));
   (async()=>{
+    const allRecs = getRecs();
     for(const r of newRecsR){
       const ok = await syncToSheets(r);
-      if(ok){ r.synced=true; }
+      if(ok){
+        const idx = allRecs.findIndex(x=>x.id===r.id);
+        if(idx>=0){ allRecs[idx].synced=true; allRecs[idx].foto=''; }
+      }
       await new Promise(res=>setTimeout(res,800));
     }
-    saveRecs(getRecs());
+    saveRecs(allRecs);
   })();
 }
 
 // ── VENTAS ──
 function renderV(idx){vTab=idx;document.getElementById('vBody').innerHTML=prodHTML(idx,vProds,'v');updateTabs('v');}
-function handleVFoto(inp){const f=inp.files[0];if(!f)return;const rd=new FileReader();rd.onload=e=>{vFoto=e.target.result;document.getElementById('vPU').style.display='none';document.getElementById('vPP').style.display='block';document.getElementById('vPImg').src=e.target.result;};rd.readAsDataURL(f);}
+function handleVFoto(inp){
+  const f=inp.files[0];if(!f)return;
+  compressImage(f, 1000, 0.65).then(dataUrl=>{
+    vFoto=dataUrl;
+    document.getElementById('vPU').style.display='none';
+    document.getElementById('vPP').style.display='block';
+    document.getElementById('vPImg').src=dataUrl;
+  });
+}
 function rmVFoto(){vFoto='';document.getElementById('vPU').style.display='block';document.getElementById('vPP').style.display='none';document.getElementById('vPI').value='';}
 function submitV(){
   const td=document.getElementById('vTDoc').value,nd=document.getElementById('vNDoc').value;
@@ -651,12 +732,16 @@ function submitV(){
   // Sync to Google Sheets sequentially
   const newRecsV=getRecs().filter(r=>r.id.startsWith(id));
   (async()=>{
+    const allRecs = getRecs();
     for(const r of newRecsV){
       const ok = await syncToSheets(r);
-      if(ok){ r.synced=true; }
+      if(ok){
+        const idx = allRecs.findIndex(x=>x.id===r.id);
+        if(idx>=0){ allRecs[idx].synced=true; allRecs[idx].foto=''; }
+      }
       await new Promise(res=>setTimeout(res,800));
     }
-    saveRecs(getRecs());
+    saveRecs(allRecs);
   })();
 }
 
