@@ -471,14 +471,16 @@ async function loadRemoteConfig(){
 
 async function saveRemoteConfig(cfg){
   try{
-    const encoded=encodeURIComponent(JSON.stringify({
-      app_name:cfg.name,
-      app_sub:cfg.sub,
-      app_logo:cfg.logo||''
-    }));
-    const res = await fetch(GS_URL+'?action=setConfig&data='+encoded);
-    const data = await res.json();
-    return data && data.ok;
+    await fetch(GS_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'setConfig',
+        config: { app_name: cfg.name, app_sub: cfg.sub, app_logo: cfg.logo||'' }
+      })
+    });
+    return true;
   }catch(e){
     console.error('Config save error',e);
     return false;
