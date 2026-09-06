@@ -391,8 +391,15 @@ let rProds=[nRP()],vProds=[nVP()],rTab=0,vTab=0,vFoto='';
 
 function nRP(){return{tipo:'',sku:'',grado:'',colada:'',lote:'',diametro:'',longitud:'',unidades:'',foto:''};}
 function nVP(){return{tipo:'',sku:'',grado:'',colada:'',lote:'',diametro:'',longitud:''};}
-function getPin(r){return localStorage.getItem('pin_'+r)||(r==='admin'?'0000':'1234');}
-function setPin(r,p){localStorage.setItem('pin_'+r,p);}
+function getPin(r){
+  const c=getCfg();
+  return r==='admin' ? (c.pinAdmin||'0000') : (c.pinOp||'1234');
+}
+function setPin(r,p){
+  const c=getCfg();
+  if(r==='admin') c.pinAdmin=p; else c.pinOp=p;
+  saveCfg(c);
+}
 function getRecs(){return JSON.parse(localStorage.getItem('pa_recs')||'[]');}
 function saveRecs(d){
   try{
@@ -457,12 +464,16 @@ async function loadRemoteConfig(){
     const data = await res.json();
     if(data && data.ok && data.config){
       const c = data.config;
-      applyConfig({
+      const remoteCfg = {
         name: c.app_name || 'Patio Acero',
         sub: c.app_sub || 'Constructor Tunja',
         logo: c.app_logo || '',
         logoText: (c.app_name||'PA').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()
-      });
+      };
+      // Solo sobreescribir PIN si la nube ya tiene un valor guardado
+      if(c.pin_operario) remoteCfg.pinOp = c.pin_operario;
+      if(c.pin_admin) remoteCfg.pinAdmin = c.pin_admin;
+      applyConfig(remoteCfg);
     }
   }catch(e){
     console.warn('No se pudo cargar configuración remota, usando local.', e);
@@ -477,7 +488,13 @@ async function saveRemoteConfig(cfg){
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
         action: 'setConfig',
-        config: { app_name: cfg.name, app_sub: cfg.sub, app_logo: cfg.logo||'' }
+        config: {
+          app_name: cfg.name,
+          app_sub: cfg.sub,
+          app_logo: cfg.logo||'',
+          pin_operario: cfg.pinOp||'',
+          pin_admin: cfg.pinAdmin||''
+        }
       })
     });
     return true;
@@ -543,11 +560,19 @@ function saveAppSettings(){
 }
 function changePin(r){
   const n=document.getElementById(r==='op'?'cpOpN':'cpAdN').value;
-  const c=document.getElementById(r==='op'?'cpOpC':'cpAdC').value;
+  const conf=document.getElementById(r==='op'?'cpOpC':'cpAdC').value;
   if(n.length<4){toast('Mínimo 4 dígitos');return;}
-  if(n!==c){toast('Los PINs no coinciden');return;}
+  if(n!==conf){toast('Los PINs no coinciden');return;}
   if(!/^\d+$/.test(n)){toast('Solo se permiten números');return;}
-  setPin(r,n);toast('PIN de '+(r==='op'?'operario':'administrador')+' actualizado correctamente');
+  const cfg=getCfg();
+  if(r==='op') cfg.pinOp=n; else cfg.pinAdmin=n;
+  saveCfg(cfg);
+  saveRemoteConfig(cfg).then(ok=>{
+    toast(ok
+      ? 'PIN de '+(r==='op'?'operario':'administrador')+' actualizado en todos los dispositivos'
+      : 'PIN guardado localmente. No se pudo sincronizar, intenta de nuevo.'
+    );
+  });
   document.getElementById(r==='op'?'cpOpN':'cpAdN').value='';
   document.getElementById(r==='op'?'cpOpC':'cpAdC').value='';
 }
